@@ -233,24 +233,36 @@ public:
   }
 
   bool OnEvent(Event event) override {
+    static size_t move_count = 0; // 🛠 Store number prefix (e.g., "123")
     bool updated = false;
 
+    // 🛠 Handle number prefix (1-9)
+    if (event.is_character() && event.character()[0] >= '0' &&
+        event.character()[0] <= '9') {
+      move_count = move_count * 10 + (event.character()[0] - '0');
+      return true; // Don't process move yet
+    }
+
+    // 🛠 Default move amount (1 if no prefix was set)
+    size_t amount = (move_count > 0) ? move_count : 1;
+    move_count = 0; // Reset after execution
+
     if (event == Event::Character('h') || event == Event::ArrowLeft) {
-      buffer.moveLeft(1);
+      buffer.moveLeft(amount);
       updated = true;
     }
     if (event == Event::Character('l') || event == Event::ArrowRight) {
-      buffer.moveRight(1);
+      buffer.moveRight(amount);
       updated = true;
     }
     if (event == Event::Character('k') || event == Event::ArrowUp) {
-      buffer.moveLeft(columns);
-      ensureBufferCoversViewport(); // 🛠 Preload before viewport updates
+      buffer.moveLeft(amount * columns);
+      ensureBufferCoversViewport();
       updated = true;
     }
     if (event == Event::Character('j') || event == Event::ArrowDown) {
-      buffer.moveRight(columns);
-      ensureBufferCoversViewport(); // 🛠 Preload before viewport updates
+      buffer.moveRight(amount * columns);
+      ensureBufferCoversViewport();
       updated = true;
     }
 
