@@ -15,7 +15,7 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(ftxui)
 
-add_executable(hextui main.cpp)
+add_executable(hextui src/main.cpp)
 
 target_link_libraries(hextui PRIVATE ftxui::screen ftxui::dom ftxui::component)
 
