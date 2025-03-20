@@ -266,6 +266,42 @@ public:
       updated = true;
     }
 
+    std::size_t cursor = buffer.getAbsoluteCursor();
+    // 🛠 Implement 'w' (Move forward to the beginning of the next word)
+    if (event == Event::Character('w')) {
+      for (size_t i = 0; i < amount; ++i) {
+        size_t next_word_start = cursor + 4 - (cursor % 4);
+        size_t move_distance = next_word_start - cursor;
+        buffer.moveRight(move_distance);
+      }
+      updated = true;
+    }
+
+    // 🛠 Implement 'b' (Move backward to the beginning of the current/previous
+    // word)
+    if (event == Event::Character('b')) {
+      for (size_t i = 0; i < amount; ++i) {
+        size_t prev_word_start =
+            (cursor % 4 == 0) ? cursor - 4 : cursor - (cursor % 4);
+        size_t move_distance = cursor - prev_word_start;
+        buffer.moveLeft(move_distance);
+      }
+      updated = true;
+    }
+
+    // 🛠 Implement 'e' (Move to the end of the current word, or next if already
+    // at the end)
+    if (event == Event::Character('e')) {
+      for (size_t i = 0; i < amount; ++i) {
+        size_t current_word_end = cursor - (cursor % 4) + 3;
+        if (cursor % 4 == 3) { // If already at the end, move to next word's end
+          current_word_end += 4;
+        }
+        size_t move_distance = current_word_end - cursor;
+        buffer.moveRight(move_distance);
+      }
+      updated = true;
+    }
     adjustViewport();
     return updated;
   }
