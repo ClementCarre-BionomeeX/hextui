@@ -36,6 +36,8 @@ public:
   void loadChunks(size_t offset) {
     if (offset >= file_size)
       return;
+    if (offset < 0)
+      offset = 0;
 
     std::ifstream file(filename, std::ios::binary);
     if (file) {
@@ -57,8 +59,13 @@ public:
       absolute_cursor = 0; // Prevent negative cursor
     }
 
+    // 🛠 Try to position cursor in the middle buffer when loading left
     if (absolute_cursor < chunk_offset) {
-      loadChunks(absolute_cursor - (absolute_cursor % chunk_size));
+      size_t new_offset =
+          (chunk_offset >= chunk_size * 2)
+              ? chunk_offset - chunk_size * 2 // Load 2 chunks before
+              : 0; // Prevent going before the file start
+      loadChunks(new_offset);
     }
   }
 
@@ -69,8 +76,13 @@ public:
       absolute_cursor = file_size - 1; // Prevent going beyond EOF
     }
 
+    // 🛠 Adjust chunk loading: Move cursor into the middle of the new chunk
     if (absolute_cursor >= chunk_offset + data.size()) {
-      loadChunks(absolute_cursor - (absolute_cursor % chunk_size));
+      size_t new_offset =
+          (chunk_offset + chunk_size * 2 < file_size)
+              ? chunk_offset + chunk_size  // Load 2 chunks ahead
+              : chunk_offset + chunk_size; // Load last possible chunk
+      loadChunks(new_offset);
     }
   }
 
@@ -252,7 +264,7 @@ public:
       std::vector<Element> hex_row = formatHexRow(i, columns);
       std::vector<Element> utf8_row = formatUtf8Row(i, columns);
       hex_row.insert(hex_row.end(), utf8_row.begin(),
-                     utf8_row.end()); // Merge vectors
+                     utf8_row.end()); // Merge both rows
       rows.push_back(hbox(hex_row));
     }
 
@@ -269,21 +281,27 @@ public:
     }
 
     return vbox(Elements{
+        // 🛠 NEW: Top Info Bar with File Name
+        hbox({text(" File: " + buffer.filename + " ") | bold |
+              color(Color::Green)}) |
+            border,
+
+        // Main UI
         hbox(Elements{
-            vbox(Elements{rows}) | border |
-                size(WIDTH, EQUAL, (columns + 1) * 2 + columns + 2 + 2),
+            vbox(rows) | border | size(WIDTH, EQUAL, columns * 3 + 3 + 2),
             separator(),
             formatInspector(abs_cursor) | border |
-                flex // 🛠 Inspector now takes remaining space
+                size(WIDTH, GREATER_THAN, 40) | flex,
         }),
+
+        // Bottom Status Bar
         hbox(Elements{
-            text(" " + command_info.str() + " ") |
-                color(Color::Yellow), // Left-aligned
+            text(" " + command_info.str() + " ") | color(Color::Yellow),
             filler(),
-            text(" " + status.str() + " ") |
-                color(Color::Cyan) // Right-aligned cursor position
+            text(" " + status.str() + " ") | color(Color::Cyan),
         }) | size(HEIGHT, EQUAL, 1) |
-            border});
+            border,
+    });
   }
 
   bool OnEvent(Event event) override {
