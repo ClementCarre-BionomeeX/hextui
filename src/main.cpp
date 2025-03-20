@@ -17,8 +17,8 @@ using namespace ftxui;
 class Buffer {
 public:
   std::vector<uint8_t> data;
-  size_t cursor = 0;
-  size_t chunk_size = 1024; // Default chunk size
+  size_t absolute_cursor = 0; // Absolute cursor in file
+  size_t chunk_size = 1024;   // Default chunk size
   size_t file_size = 0;
   size_t chunk_offset = 0; // Offset of the first loaded byte in the file
   std::string filename;
@@ -39,40 +39,41 @@ public:
     std::ifstream file(filename, std::ios::binary);
     if (file) {
       file.seekg(offset);
-      data.resize(chunk_size * 2); // Load two chunks (current + next)
-      file.read(reinterpret_cast<char *>(data.data()), chunk_size * 2);
+
+      // 🛠 Load THREE chunks: previous, current, next (for smooth transitions)
+      size_t total_size = chunk_size * 3;
+      data.resize(total_size);
+      file.read(reinterpret_cast<char *>(data.data()), total_size);
       data.resize(file.gcount()); // Resize to actual read size
       chunk_offset = offset;
     }
   }
 
-  void ensureCursorInBuffer() {
-    if (cursor >= data.size()) {
-      cursor = data.size() - 1;
-    }
-  }
-
   void moveLeft(size_t amount = 1) {
-    if (cursor >= amount) {
-      cursor -= amount;
-    } else if (chunk_offset > 0) {
-      loadChunks(chunk_offset - chunk_size);
-      cursor = std::min(data.size() - 1, chunk_size - 1);
+    if (absolute_cursor >= amount) {
+      absolute_cursor -= amount;
+    } else {
+      absolute_cursor = 0; // Prevent negative cursor
     }
-    ensureCursorInBuffer();
+
+    if (absolute_cursor < chunk_offset) {
+      loadChunks(absolute_cursor - (absolute_cursor % chunk_size));
+    }
   }
 
   void moveRight(size_t amount = 1) {
-    if (cursor + amount < data.size()) {
-      cursor += amount;
-    } else if (chunk_offset + data.size() < file_size) {
-      loadChunks(chunk_offset + chunk_size);
-      cursor = 0;
+    if (absolute_cursor + amount < file_size) {
+      absolute_cursor += amount;
+    } else {
+      absolute_cursor = file_size - 1; // Prevent going beyond EOF
     }
-    ensureCursorInBuffer();
+
+    if (absolute_cursor >= chunk_offset + data.size()) {
+      loadChunks(absolute_cursor - (absolute_cursor % chunk_size));
+    }
   }
 
-  size_t getAbsoluteCursor() const { return chunk_offset + cursor; }
+  size_t getAbsoluteCursor() const { return absolute_cursor; }
 
   void reload() { loadChunks(chunk_offset); }
 };
@@ -102,25 +103,59 @@ private:
 
   void ensureBufferCoversViewport() {
     size_t viewport_end = viewport_offset + (viewport_size * columns);
-    if (viewport_end > buffer.chunk_offset + buffer.data.size()) {
-      buffer.loadChunks(buffer.chunk_offset + buffer.chunk_size);
+    size_t preload_threshold =
+        buffer.chunk_offset +
+        (buffer.chunk_size * 2); // 🛠 Preload third chunk earlier
+
+    // 🛠 Preload the third chunk BEFORE viewport reaches the second chunk’s end
+    if (viewport_end >= preload_threshold) {
+      buffer.loadChunks(viewport_end - (viewport_end % buffer.chunk_size));
+    }
+
+    // 🛠 Preload previous chunk earlier when moving up
+    size_t viewport_start = viewport_offset;
+    size_t preload_previous_threshold = buffer.chunk_offset + buffer.chunk_size;
+
+    if (viewport_start < preload_previous_threshold &&
+        buffer.chunk_offset > 0) {
+      buffer.loadChunks(buffer.chunk_offset - buffer.chunk_size);
     }
   }
 
   std::vector<Element> formatHexRow(size_t start, size_t length) {
     std::vector<Element> row;
-    for (size_t i = 0; i < length && (start + i) < buffer.data.size(); ++i) {
-      std::ostringstream oss;
-      oss << std::setw(2) << std::setfill('0') << std::hex
-          << (int)buffer.data[start + i];
+    size_t abs_cursor = buffer.getAbsoluteCursor();
 
-      auto byte_element = text(oss.str());
-      if (start + i == buffer.cursor) {
-        byte_element = byte_element | inverted;
+    for (size_t i = 0; i < length; ++i) {
+      size_t abs_pos = start + i;
+
+      // 🛠 Ensure chunk is preloaded before rendering
+      if (abs_pos >= buffer.chunk_offset + buffer.data.size()) {
+        buffer.loadChunks(abs_pos - (abs_pos % buffer.chunk_size));
       }
 
-      row.push_back(byte_element);
+      if (abs_pos < buffer.chunk_offset ||
+          abs_pos >= buffer.chunk_offset + buffer.data.size()) {
+        row.push_back(text("  ")); // 🛠 Empty space instead of ".."
+      } else {
+        size_t local_pos = abs_pos - buffer.chunk_offset;
+        std::ostringstream oss;
+        oss << std::setw(2) << std::setfill('0') << std::hex
+            << (int)buffer.data[local_pos];
+
+        auto byte_element = text(oss.str());
+
+        // Highlight selected byte
+        if (abs_pos == abs_cursor) {
+          byte_element = byte_element | inverted;
+        }
+
+        row.push_back(byte_element);
+      }
+
       row.push_back(text(" "));
+
+      // Add extra space every 4 bytes for readability
       if ((i + 1) % 4 == 0) {
         row.push_back(text(" "));
       }
@@ -129,10 +164,14 @@ private:
   }
 
   Element formatInspector(size_t index) {
-    if (index >= buffer.data.size())
-      return text("Out of bounds");
+    // 🛠 Fix: No need to check against buffer.data.size()
+    if (index >= buffer.file_size) {
+      return text(
+          "Out of bounds"); // Only return this if the cursor is beyond EOF
+    }
 
-    uint8_t u8 = buffer.data[index];
+    uint8_t u8 =
+        buffer.data[index - buffer.chunk_offset]; // Adjust for chunk offset
     int8_t i8 = static_cast<int8_t>(u8);
     uint16_t u16 = 0;
     int16_t i16 = 0;
@@ -143,33 +182,33 @@ private:
     float f32 = 0.0f;
     double f64 = 0.0;
 
-    if (index + 2 <= buffer.data.size()) {
-      std::memcpy(&u16, &buffer.data[index], 2);
-      std::memcpy(&i16, &buffer.data[index], 2);
+    if (index + 2 <= buffer.file_size) {
+      std::memcpy(&u16, &buffer.data[index - buffer.chunk_offset], 2);
+      std::memcpy(&i16, &buffer.data[index - buffer.chunk_offset], 2);
     }
-    if (index + 4 <= buffer.data.size()) {
-      std::memcpy(&u32, &buffer.data[index], 4);
-      std::memcpy(&i32, &buffer.data[index], 4);
-      std::memcpy(&f32, &buffer.data[index], 4);
+    if (index + 4 <= buffer.file_size) {
+      std::memcpy(&u32, &buffer.data[index - buffer.chunk_offset], 4);
+      std::memcpy(&i32, &buffer.data[index - buffer.chunk_offset], 4);
+      std::memcpy(&f32, &buffer.data[index - buffer.chunk_offset], 4);
     }
-    if (index + 8 <= buffer.data.size()) {
-      std::memcpy(&u64, &buffer.data[index], 8);
-      std::memcpy(&i64, &buffer.data[index], 8);
-      std::memcpy(&f64, &buffer.data[index], 8);
+    if (index + 8 <= buffer.file_size) {
+      std::memcpy(&u64, &buffer.data[index - buffer.chunk_offset], 8);
+      std::memcpy(&i64, &buffer.data[index - buffer.chunk_offset], 8);
+      std::memcpy(&f64, &buffer.data[index - buffer.chunk_offset], 8);
     }
 
     return vbox({
         text("Inspector:") | bold | underlined,
-        text("uint8:   " + std::to_string(u8)),
-        text("int8:    " + std::to_string(i8)),
-        text("uint16:  " + std::to_string(u16)),
-        text("int16:   " + std::to_string(i16)),
-        text("uint32:  " + std::to_string(u32)),
-        text("int32:   " + std::to_string(i32)),
-        text("uint64:  " + std::to_string(u64)),
-        text("int64:   " + std::to_string(i64)),
+        text("  uint8: " + std::to_string(u8)),
+        text("   int8: " + std::to_string(i8)) | underlined,
+        text(" uint16: " + std::to_string(u16)),
+        text("  int16: " + std::to_string(i16)) | underlined,
+        text(" uint32: " + std::to_string(u32)),
+        text("  int32: " + std::to_string(i32)) | underlined,
+        text(" uint64: " + std::to_string(u64)),
+        text("  int64: " + std::to_string(i64)) | underlined,
         text("float32: " + std::to_string(f32)),
-        text("float64: " + std::to_string(f64)),
+        text("float64: " + std::to_string(f64)) | underlined,
     });
   }
 
@@ -178,15 +217,19 @@ public:
 
   Element Render() override {
     std::vector<Element> rows;
+    size_t abs_cursor = buffer.getAbsoluteCursor();
+
     for (size_t i = viewport_offset;
          i < viewport_offset + viewport_size * columns; i += columns) {
-      rows.push_back(hbox(formatHexRow(i - buffer.chunk_offset, columns)));
+      rows.push_back(hbox(formatHexRow(i, columns)));
     }
 
-    return hbox(
-        {vbox(rows) | border | size(WIDTH, EQUAL, columns * 3 + 3 + 2),
-         separator(),
-         formatInspector(buffer.cursor) | border | size(WIDTH, LESS_THAN, 40)});
+    return hbox({
+        vbox(rows) | border | size(WIDTH, EQUAL, columns * 3 + 3 + 2),
+        separator(),
+        formatInspector(abs_cursor) | border |
+            size(WIDTH, LESS_THAN, 40) // 🛠 Fix: Use absolute_cursor directly
+    });
   }
 
   bool OnEvent(Event event) override {
@@ -202,10 +245,12 @@ public:
     }
     if (event == Event::Character('k') || event == Event::ArrowUp) {
       buffer.moveLeft(columns);
+      ensureBufferCoversViewport(); // 🛠 Preload before viewport updates
       updated = true;
     }
     if (event == Event::Character('j') || event == Event::ArrowDown) {
       buffer.moveRight(columns);
+      ensureBufferCoversViewport(); // 🛠 Preload before viewport updates
       updated = true;
     }
 
