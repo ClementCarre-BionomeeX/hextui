@@ -10,6 +10,7 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <string>
 #include <vector>
 
 using namespace ftxui;
@@ -85,6 +86,9 @@ private:
   size_t viewport_size = 20;
   size_t viewport_offset = 0;
 
+  size_t move_count = 0;         // Stores the number prefix (e.g., "123")
+  std::string last_command = ""; // Stores the last executed command
+
   void adjustViewport() {
     size_t cursor_abs = buffer.getAbsoluteCursor();
     size_t cursor_row = cursor_abs / columns;
@@ -103,16 +107,12 @@ private:
 
   void ensureBufferCoversViewport() {
     size_t viewport_end = viewport_offset + (viewport_size * columns);
-    size_t preload_threshold =
-        buffer.chunk_offset +
-        (buffer.chunk_size * 2); // 🛠 Preload third chunk earlier
+    size_t preload_threshold = buffer.chunk_offset + (buffer.chunk_size * 2);
 
-    // 🛠 Preload the third chunk BEFORE viewport reaches the second chunk’s end
     if (viewport_end >= preload_threshold) {
       buffer.loadChunks(viewport_end - (viewport_end % buffer.chunk_size));
     }
 
-    // 🛠 Preload previous chunk earlier when moving up
     size_t viewport_start = viewport_offset;
     size_t preload_previous_threshold = buffer.chunk_offset + buffer.chunk_size;
 
@@ -152,8 +152,6 @@ private:
 
         row.push_back(byte_element);
       }
-
-      row.push_back(text(" "));
 
       // Add extra space every 4 bytes for readability
       if ((i + 1) % 4 == 0) {
@@ -212,73 +210,135 @@ private:
     });
   }
 
+  std::vector<Element> formatUtf8Row(size_t start, size_t length) {
+    std::vector<Element> row;
+    size_t abs_cursor = buffer.getAbsoluteCursor();
+
+    for (size_t i = 0; i < length; ++i) {
+      size_t abs_pos = start + i;
+
+      if (abs_pos < buffer.chunk_offset ||
+          abs_pos >= buffer.chunk_offset + buffer.data.size()) {
+        row.push_back(text(".") | color(Color::GrayDark)); // Out-of-bounds
+      } else {
+        uint8_t byte = buffer.data[abs_pos - buffer.chunk_offset];
+        char display_char =
+            (byte >= 32 && byte <= 126) ? byte : '.'; // Printable ASCII or dot
+        auto char_element =
+            text(std::string(1, display_char)) | color(Color::White);
+
+        // 🛠 Highlight the corresponding UTF-8 character when the cursor is over
+        // it
+        if (abs_pos == abs_cursor) {
+          char_element = char_element | inverted;
+        }
+
+        row.push_back(char_element);
+      }
+    }
+    return row;
+  }
+
 public:
   HexViewer(const std::string &filename) : buffer(filename) {}
 
   Element Render() override {
     std::vector<Element> rows;
     size_t abs_cursor = buffer.getAbsoluteCursor();
+    size_t file_size_display = buffer.file_size - 1;
 
     for (size_t i = viewport_offset;
          i < viewport_offset + viewport_size * columns; i += columns) {
-      rows.push_back(hbox(formatHexRow(i, columns)));
+      std::vector<Element> hex_row = formatHexRow(i, columns);
+      std::vector<Element> utf8_row = formatUtf8Row(i, columns);
+      hex_row.insert(hex_row.end(), utf8_row.begin(),
+                     utf8_row.end()); // Merge vectors
+      rows.push_back(hbox(hex_row));
     }
 
-    return hbox({
-        vbox(rows) | border | size(WIDTH, EQUAL, columns * 3 + 3 + 2),
-        separator(),
-        formatInspector(abs_cursor) | border |
-            size(WIDTH, LESS_THAN, 40) // 🛠 Fix: Use absolute_cursor directly
-    });
+    // 🛠 Status bar elements
+    std::ostringstream status;
+    status << abs_cursor << " / " << file_size_display;
+
+    std::ostringstream command_info;
+    if (move_count > 0) {
+      command_info << move_count; // Display number prefix if active
+    }
+    if (!last_command.empty()) {
+      command_info << last_command; // Show last executed command
+    }
+
+    return vbox(Elements{
+        hbox(Elements{
+            vbox(Elements{rows}) | border |
+                size(WIDTH, EQUAL, (columns + 1) * 2 + columns + 2 + 2),
+            separator(),
+            formatInspector(abs_cursor) | border |
+                flex // 🛠 Inspector now takes remaining space
+        }),
+        hbox(Elements{
+            text(" " + command_info.str() + " ") |
+                color(Color::Yellow), // Left-aligned
+            filler(),
+            text(" " + status.str() + " ") |
+                color(Color::Cyan) // Right-aligned cursor position
+        }) | size(HEIGHT, EQUAL, 1) |
+            border});
   }
 
   bool OnEvent(Event event) override {
-    static size_t move_count = 0; // 🛠 Store number prefix (e.g., "123")
     bool updated = false;
 
     // 🛠 Handle number prefix (1-9)
     if (event.is_character() && event.character()[0] >= '0' &&
         event.character()[0] <= '9') {
       move_count = move_count * 10 + (event.character()[0] - '0');
-      return true; // Don't process move yet
+      last_command = "";
+      return true;
     }
 
     // 🛠 Default move amount (1 if no prefix was set)
     size_t amount = (move_count > 0) ? move_count : 1;
     move_count = 0; // Reset after execution
 
+    std::size_t cursor = buffer.getAbsoluteCursor();
+
+    // 🛠 Movement commands
     if (event == Event::Character('h') || event == Event::ArrowLeft) {
       buffer.moveLeft(amount);
+      last_command = (amount > 1 ? std::to_string(amount) : "") + "h";
       updated = true;
     }
     if (event == Event::Character('l') || event == Event::ArrowRight) {
       buffer.moveRight(amount);
+      last_command = (amount > 1 ? std::to_string(amount) : "") + "l";
       updated = true;
     }
     if (event == Event::Character('k') || event == Event::ArrowUp) {
       buffer.moveLeft(amount * columns);
+      last_command = (amount > 1 ? std::to_string(amount) : "") + "k";
       ensureBufferCoversViewport();
       updated = true;
     }
     if (event == Event::Character('j') || event == Event::ArrowDown) {
       buffer.moveRight(amount * columns);
+      last_command = (amount > 1 ? std::to_string(amount) : "") + "j";
       ensureBufferCoversViewport();
       updated = true;
     }
 
-    std::size_t cursor = buffer.getAbsoluteCursor();
-    // 🛠 Implement 'w' (Move forward to the beginning of the next word)
+    // 🛠 Implement 'w' (Move forward to the next word start)
     if (event == Event::Character('w')) {
       for (size_t i = 0; i < amount; ++i) {
         size_t next_word_start = cursor + 4 - (cursor % 4);
         size_t move_distance = next_word_start - cursor;
         buffer.moveRight(move_distance);
       }
+      last_command = "w";
       updated = true;
     }
 
-    // 🛠 Implement 'b' (Move backward to the beginning of the current/previous
-    // word)
+    // 🛠 Implement 'b' (Move backward to the previous word start)
     if (event == Event::Character('b')) {
       for (size_t i = 0; i < amount; ++i) {
         size_t prev_word_start =
@@ -286,22 +346,24 @@ public:
         size_t move_distance = cursor - prev_word_start;
         buffer.moveLeft(move_distance);
       }
+      last_command = "b";
       updated = true;
     }
 
-    // 🛠 Implement 'e' (Move to the end of the current word, or next if already
-    // at the end)
+    // 🛠 Implement 'e' (Move to the end of the current/next word)
     if (event == Event::Character('e')) {
       for (size_t i = 0; i < amount; ++i) {
         size_t current_word_end = cursor - (cursor % 4) + 3;
-        if (cursor % 4 == 3) { // If already at the end, move to next word's end
+        if (cursor % 4 == 3) { // If already at end, move to next word end
           current_word_end += 4;
         }
         size_t move_distance = current_word_end - cursor;
         buffer.moveRight(move_distance);
       }
+      last_command = "e";
       updated = true;
     }
+
     adjustViewport();
     return updated;
   }
