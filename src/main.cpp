@@ -24,7 +24,7 @@ public:
   size_t chunk_offset = 0; // Offset of the first loaded byte in the file
   std::string filename;
 
-  std::size_t current_chunk = 0;
+  size_t current_chunk = 0;
 
   Buffer(const std::string &file, size_t chunk = 1024)
       : filename(file), chunk_size(chunk) {
@@ -35,14 +35,14 @@ public:
     loadChunk(0); // Load initial chunk
   }
 
-  std::size_t whichChunkAreWe(std::size_t position) {
+  size_t whichChunkAreWe(size_t position) {
     // TODO: check this formulae
     return position / chunk_size;
   }
 
-  void loadChunk(std::size_t chunk) {
+  void loadChunk(size_t chunk) {
 
-    std::size_t offset = (chunk > 1) ? (chunk - 1) * chunk_size : 0;
+    size_t offset = (chunk > 1) ? (chunk - 1) * chunk_size : 0;
 
     std::ifstream file(filename, std::ios::binary);
     if (file) {
@@ -97,6 +97,14 @@ public:
 
   size_t getAbsoluteCursor() const { return absolute_cursor; }
 
+  void goHome() {
+    absolute_cursor = 0;
+    checkChunks(absolute_cursor);
+  }
+  void goEnd() {
+    absolute_cursor = file_size - 1;
+    checkChunks(absolute_cursor);
+  }
   void reload() { checkChunks(chunk_offset); }
 };
 
@@ -274,7 +282,7 @@ public:
       command_info << last_command; // Show last executed command
     }
 
-    std::size_t viewerwidth =
+    size_t viewerwidth =
         columns * word_size * 2 + (columns - 1) + 2 + columns * word_size + 2;
     return vbox(Elements{
         // 🛠 NEW: Top Info Bar with File Name
@@ -316,7 +324,7 @@ public:
     size_t amount = (move_count > 0) ? move_count : 1;
     move_count = 0; // Reset after execution
 
-    std::size_t cursor = buffer.getAbsoluteCursor();
+    size_t cursor = buffer.getAbsoluteCursor();
 
     // 🛠 Movement commands
     if (event == Event::Character('h') || event == Event::ArrowLeft) {
@@ -376,6 +384,20 @@ public:
         buffer.moveRight(move_distance);
       }
       last_command = (amount > 1 ? std::to_string(amount) : "") + "e";
+      updated = true;
+    }
+
+    auto home = Event::Special({27, 91, 72});
+    if (event == home) {
+      buffer.goHome();
+      last_command = "Home";
+      updated = true;
+    }
+
+    auto end = Event::Special({27, 91, 70});
+    if (event == end) {
+      buffer.goEnd();
+      last_command = "End";
       updated = true;
     }
 
