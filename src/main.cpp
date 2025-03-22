@@ -19,6 +19,7 @@ class HexViewer : public ComponentBase {
 private:
   Buffer buffer;
   size_t viewport_size = 20;
+  ScreenInteractive &screen;
   size_t viewport_offset = 0;
 
   size_t word_size = 4;
@@ -73,7 +74,7 @@ private:
         row.push_back(byte_element);
       }
 
-      // Add extra space every 4 bytes for readability
+      // Add extra space every word_size for readability
       if ((i + 1) % word_size == 0) {
         row.push_back(text(" "));
       }
@@ -160,7 +161,8 @@ private:
   }
 
 public:
-  HexViewer(const std::string &filename) : buffer(filename) {}
+  HexViewer(const std::string &filename, ScreenInteractive &screen)
+      : buffer(filename), screen(screen) {}
 
   Element Render() override {
     std::vector<Element> rows;
@@ -204,7 +206,7 @@ public:
             separator(),
             formatInspector(abs_cursor) | border |
                 size(WIDTH, GREATER_THAN, 40) | flex,
-        }),
+        }) | flex,
 
         // Bottom Status Bar
         hbox(Elements{
@@ -348,6 +350,18 @@ public:
       updated = true;
     }
 
+    if (event == Event::Character('r')) {
+      buffer.reload();
+      last_command = "r";
+      updated = true;
+    }
+
+    if (event == Event::Character('q')) {
+      // how to quit ??
+      screen.ExitLoopClosure()();
+      return true;
+    }
+
     adjustViewport();
     return updated;
   }
@@ -359,8 +373,8 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  auto screen = ScreenInteractive::TerminalOutput();
-  auto viewer = std::make_shared<HexViewer>(argv[1]);
+  auto screen = ScreenInteractive::Fullscreen();
+  auto viewer = std::make_shared<HexViewer>(argv[1], screen);
   screen.Loop(viewer);
 
   return 0;
