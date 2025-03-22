@@ -108,6 +108,7 @@ private:
 
   size_t word_size = 4;
   size_t columns = 4;
+
   size_t move_count = 0;         // Stores the number prefix (e.g., "123")
   std::string last_command = ""; // Stores the last executed command
 
@@ -375,6 +376,39 @@ public:
         buffer.moveRight(move_distance);
       }
       last_command = "e";
+      updated = true;
+    }
+
+    auto altMinus = Event::Special({27, 45});
+    if (event == altMinus) {
+      // handle Alt+"-"
+      word_size -= 1;
+      word_size = word_size > 1 ? word_size : 1;
+      last_command = "Alt -";
+      updated = true;
+    }
+
+    if (event == Event::Character('-')) {
+      // handle plain "+"
+      columns -= 1;
+      columns = columns > 1 ? columns : 1;
+      last_command = "-";
+      updated = true;
+    }
+
+    auto altPlus = Event::Special({27, 43});
+    if (event == altPlus) {
+
+      // handle Alt+"+"
+      word_size += 1;
+      last_command = "Alt +";
+      updated = true;
+    }
+
+    if (event == Event::Character('+')) {
+      // handle plain "+"
+      columns += 1;
+      last_command = "+";
       updated = true;
     }
 
