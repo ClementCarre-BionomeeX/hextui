@@ -29,6 +29,13 @@ private:
   std::string last_command = ""; // Stores the last executed command
 
   void adjustViewport() {
+
+    const size_t screen_height = screen.dimy();
+
+    // Subtract space for top bar and bottom status bar (typically 4-5 lines
+    // total)
+    viewport_size = (screen_height > 8) ? screen_height - 8 : 1;
+
     size_t cursor_abs = buffer.getAbsoluteCursor();
     size_t cursor_row = cursor_abs / (columns * word_size);
 
@@ -162,13 +169,18 @@ private:
 
 public:
   HexViewer(const std::string &filename, ScreenInteractive &screen)
-      : buffer(filename), screen(screen) {}
+      : buffer(filename), screen(screen) {
+    screen.PostEvent(Event::Custom);
+  }
 
   Element Render() override {
     std::vector<Element> rows;
     size_t abs_cursor = buffer.getAbsoluteCursor();
     size_t file_size_display = buffer.file_size - 1;
 
+    adjustViewport();
+
+    rows.reserve(viewport_size);
     for (size_t i = viewport_offset;
          i < viewport_offset + viewport_size * (columns * word_size);
          i += (columns * word_size)) {
