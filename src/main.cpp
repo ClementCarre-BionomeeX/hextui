@@ -24,6 +24,8 @@ public:
   size_t chunk_offset = 0; // Offset of the first loaded byte in the file
   std::string filename;
 
+  std::size_t current_chunk = 0;
+
   Buffer(const std::string &file, size_t chunk = 1024)
       : filename(file), chunk_size(chunk) {
     std::ifstream file_stream(filename, std::ios::binary | std::ios::ate);
@@ -33,11 +35,23 @@ public:
     loadChunks(0); // Load initial chunk
   }
 
-  void loadChunks(size_t offset) {
-    if (offset >= file_size)
-      return;
-    if (offset < 0)
-      offset = 0;
+  std::size_t computeChunk(std::size_t position) {
+    // TODO: check this formulae
+    return position / chunk_size;
+  }
+
+  void loadChunks(size_t new_position) {
+
+    if (new_position >= file_size)
+      new_position = file_size - 1;
+    if (new_position < 0)
+      new_position = 0;
+
+    // TODO: first check in which chunck we are after offseting
+    auto chunk = computeChunk(new_position);
+    if (chunk != current_chunk) {
+      // we change chunk
+    }
 
     std::ifstream file(filename, std::ios::binary);
     if (file) {
@@ -60,11 +74,12 @@ public:
     }
 
     // 🛠 Try to position cursor in the middle buffer when loading left
-    if (absolute_cursor < chunk_offset) {
+    if (absolute_cursor < chunk_offset + chunk_size) {
       size_t new_offset =
-          (chunk_offset >= chunk_size * 2)
-              ? chunk_offset - chunk_size * 2 // Load 2 chunks before
-              : 0; // Prevent going before the file start
+          (chunk_offset - chunk_size > 0) ? chunk_offset - chunk_size : 0;
+      /*(chunk_offset >= chunk_size * 2)*/
+      /*    ? chunk_offset - chunk_size * 2 // Load 2 chunks before*/
+      /*    : 0; // Prevent going before the file start*/
       loadChunks(new_offset);
     }
   }
@@ -77,11 +92,11 @@ public:
     }
 
     // 🛠 Adjust chunk loading: Move cursor into the middle of the new chunk
-    if (absolute_cursor >= chunk_offset + data.size()) {
+    if (absolute_cursor >= chunk_offset + data.size() - chunk_size) {
       size_t new_offset =
-          (chunk_offset + chunk_size * 2 < file_size)
-              ? chunk_offset + chunk_size  // Load 2 chunks ahead
-              : chunk_offset + chunk_size; // Load last possible chunk
+          (chunk_offset + chunk_size < file_size) ? chunk_offset + chunk_size
+          : (file_size - 3 * chunk_size > 0)      ? file_size - 3 * chunk_size
+                                                  : 0;
       loadChunks(new_offset);
     }
   }
