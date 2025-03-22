@@ -99,5 +99,5 @@ public:
     absolute_cursor = file_size - 1;
     checkChunks(absolute_cursor);
   }
-  void reload() { checkChunks(chunk_offset); }
+  void reload() { checkChunks(absolute_cursor); }
 };
