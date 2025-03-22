@@ -32,26 +32,17 @@ public:
     if (file_stream) {
       file_size = file_stream.tellg(); // Get total file size
     }
-    loadChunks(0); // Load initial chunk
+    loadChunk(0); // Load initial chunk
   }
 
-  std::size_t computeChunk(std::size_t position) {
+  std::size_t whichChunkAreWe(std::size_t position) {
     // TODO: check this formulae
     return position / chunk_size;
   }
 
-  void loadChunks(size_t new_position) {
+  void loadChunk(std::size_t chunk) {
 
-    if (new_position >= file_size)
-      new_position = file_size - 1;
-    if (new_position < 0)
-      new_position = 0;
-
-    // TODO: first check in which chunck we are after offseting
-    auto chunk = computeChunk(new_position);
-    if (chunk != current_chunk) {
-      // we change chunk
-    }
+    std::size_t offset = (chunk > 1) ? (chunk - 1) * chunk_size : 0;
 
     std::ifstream file(filename, std::ios::binary);
     if (file) {
@@ -66,6 +57,24 @@ public:
     }
   }
 
+  void checkChunks(size_t new_position) {
+
+    if (new_position >= file_size) {
+      new_position = file_size - 1;
+    }
+    if (new_position < 0) {
+      new_position = 0;
+    }
+
+    // TODO: first check in which chunck we are after offseting
+    auto chunk = whichChunkAreWe(new_position);
+    if (chunk != current_chunk) {
+      // we changed chunk
+      current_chunk = chunk;
+      loadChunk(chunk);
+    }
+  }
+
   void moveLeft(size_t amount = 1) {
     if (absolute_cursor >= amount) {
       absolute_cursor -= amount;
@@ -73,15 +82,7 @@ public:
       absolute_cursor = 0; // Prevent negative cursor
     }
 
-    // 🛠 Try to position cursor in the middle buffer when loading left
-    if (absolute_cursor < chunk_offset + chunk_size) {
-      size_t new_offset =
-          (chunk_offset - chunk_size > 0) ? chunk_offset - chunk_size : 0;
-      /*(chunk_offset >= chunk_size * 2)*/
-      /*    ? chunk_offset - chunk_size * 2 // Load 2 chunks before*/
-      /*    : 0; // Prevent going before the file start*/
-      loadChunks(new_offset);
-    }
+    checkChunks(absolute_cursor);
   }
 
   void moveRight(size_t amount = 1) {
@@ -91,19 +92,12 @@ public:
       absolute_cursor = file_size - 1; // Prevent going beyond EOF
     }
 
-    // 🛠 Adjust chunk loading: Move cursor into the middle of the new chunk
-    if (absolute_cursor >= chunk_offset + data.size() - chunk_size) {
-      size_t new_offset =
-          (chunk_offset + chunk_size < file_size) ? chunk_offset + chunk_size
-          : (file_size - 3 * chunk_size > 0)      ? file_size - 3 * chunk_size
-                                                  : 0;
-      loadChunks(new_offset);
-    }
+    checkChunks(absolute_cursor);
   }
 
   size_t getAbsoluteCursor() const { return absolute_cursor; }
 
-  void reload() { loadChunks(chunk_offset); }
+  void reload() { checkChunks(chunk_offset); }
 };
 
 class HexViewer : public ComponentBase {
@@ -129,23 +123,11 @@ private:
       viewport_offset = cursor_row * columns - (viewport_size - 1) * columns;
     }
 
-    ensureBufferCoversViewport();
   }
 
-  void ensureBufferCoversViewport() {
-    size_t viewport_end = viewport_offset + (viewport_size * columns);
-    size_t preload_threshold = buffer.chunk_offset + (buffer.chunk_size * 2);
 
-    if (viewport_end >= preload_threshold) {
-      buffer.loadChunks(viewport_end - (viewport_end % buffer.chunk_size));
-    }
-
-    size_t viewport_start = viewport_offset;
-    size_t preload_previous_threshold = buffer.chunk_offset + buffer.chunk_size;
-
-    if (viewport_start < preload_previous_threshold &&
-        buffer.chunk_offset > 0) {
-      buffer.loadChunks(buffer.chunk_offset - buffer.chunk_size);
+      viewport_offset = cursor_row * (columns * word_size) -
+                        (viewport_size - 1) * (columns * word_size);
     }
   }
 
@@ -158,7 +140,7 @@ private:
 
       // 🛠 Ensure chunk is preloaded before rendering
       if (abs_pos >= buffer.chunk_offset + buffer.data.size()) {
-        buffer.loadChunks(abs_pos - (abs_pos % buffer.chunk_size));
+        buffer.checkChunks(abs_pos - (abs_pos % buffer.chunk_size));
       }
 
       if (abs_pos < buffer.chunk_offset ||
@@ -350,13 +332,11 @@ public:
     if (event == Event::Character('k') || event == Event::ArrowUp) {
       buffer.moveLeft(amount * columns);
       last_command = (amount > 1 ? std::to_string(amount) : "") + "k";
-      ensureBufferCoversViewport();
       updated = true;
     }
     if (event == Event::Character('j') || event == Event::ArrowDown) {
       buffer.moveRight(amount * columns);
       last_command = (amount > 1 ? std::to_string(amount) : "") + "j";
-      ensureBufferCoversViewport();
       updated = true;
     }
 
