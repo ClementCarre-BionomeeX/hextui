@@ -103,29 +103,24 @@ public:
 class HexViewer : public ComponentBase {
 private:
   Buffer buffer;
-  size_t columns = 16;
   size_t viewport_size = 20;
   size_t viewport_offset = 0;
 
+  size_t word_size = 4;
+  size_t columns = 4;
   size_t move_count = 0;         // Stores the number prefix (e.g., "123")
   std::string last_command = ""; // Stores the last executed command
 
   void adjustViewport() {
     size_t cursor_abs = buffer.getAbsoluteCursor();
-    size_t cursor_row = cursor_abs / columns;
+    size_t cursor_row = cursor_abs / (columns * word_size);
 
-    size_t viewport_row_start = viewport_offset / columns;
+    size_t viewport_row_start = viewport_offset / (columns * word_size);
     size_t viewport_row_end = viewport_row_start + viewport_size;
 
     if (cursor_row < viewport_row_start) {
-      viewport_offset = cursor_row * columns;
+      viewport_offset = cursor_row * (columns * word_size);
     } else if (cursor_row >= viewport_row_end) {
-      viewport_offset = cursor_row * columns - (viewport_size - 1) * columns;
-    }
-
-  }
-
-
       viewport_offset = cursor_row * (columns * word_size) -
                         (viewport_size - 1) * (columns * word_size);
     }
@@ -163,7 +158,7 @@ private:
       }
 
       // Add extra space every 4 bytes for readability
-      if ((i + 1) % 4 == 0) {
+      if ((i + 1) % word_size == 0) {
         row.push_back(text(" "));
       }
     }
@@ -257,9 +252,10 @@ public:
     size_t file_size_display = buffer.file_size - 1;
 
     for (size_t i = viewport_offset;
-         i < viewport_offset + viewport_size * columns; i += columns) {
-      std::vector<Element> hex_row = formatHexRow(i, columns);
-      std::vector<Element> utf8_row = formatUtf8Row(i, columns);
+         i < viewport_offset + viewport_size * (columns * word_size);
+         i += (columns * word_size)) {
+      std::vector<Element> hex_row = formatHexRow(i, (columns * word_size));
+      std::vector<Element> utf8_row = formatUtf8Row(i, (columns * word_size));
       hex_row.insert(hex_row.end(), utf8_row.begin(),
                      utf8_row.end()); // Merge both rows
       rows.push_back(hbox(hex_row));
@@ -277,6 +273,8 @@ public:
       command_info << last_command; // Show last executed command
     }
 
+    std::size_t viewerwidth =
+        columns * word_size * 2 + (columns - 1) + 2 + columns * word_size + 2;
     return vbox(Elements{
         // 🛠 NEW: Top Info Bar with File Name
         hbox({text(" File: " + buffer.filename + " ") | bold |
@@ -285,7 +283,8 @@ public:
 
         // Main UI
         hbox(Elements{
-            vbox(rows) | border | size(WIDTH, EQUAL, columns * 3 + 3 + 2),
+            vbox(rows) | border | size(WIDTH, EQUAL, viewerwidth),
+            /*vbox(rows) | border | size(WIDTH, EQUAL, columns * 3 + 3 + 2),*/
             separator(),
             formatInspector(abs_cursor) | border |
                 size(WIDTH, GREATER_THAN, 40) | flex,
@@ -330,12 +329,12 @@ public:
       updated = true;
     }
     if (event == Event::Character('k') || event == Event::ArrowUp) {
-      buffer.moveLeft(amount * columns);
+      buffer.moveLeft(amount * columns * word_size);
       last_command = (amount > 1 ? std::to_string(amount) : "") + "k";
       updated = true;
     }
     if (event == Event::Character('j') || event == Event::ArrowDown) {
-      buffer.moveRight(amount * columns);
+      buffer.moveRight(amount * columns * word_size);
       last_command = (amount > 1 ? std::to_string(amount) : "") + "j";
       updated = true;
     }
@@ -343,7 +342,7 @@ public:
     // 🛠 Implement 'w' (Move forward to the next word start)
     if (event == Event::Character('w')) {
       for (size_t i = 0; i < amount; ++i) {
-        size_t next_word_start = cursor + 4 - (cursor % 4);
+        size_t next_word_start = cursor + word_size - (cursor % word_size);
         size_t move_distance = next_word_start - cursor;
         buffer.moveRight(move_distance);
       }
@@ -354,8 +353,9 @@ public:
     // 🛠 Implement 'b' (Move backward to the previous word start)
     if (event == Event::Character('b')) {
       for (size_t i = 0; i < amount; ++i) {
-        size_t prev_word_start =
-            (cursor % 4 == 0) ? cursor - 4 : cursor - (cursor % 4);
+        size_t prev_word_start = (cursor % word_size == 0)
+                                     ? cursor - word_size
+                                     : cursor - (cursor % word_size);
         size_t move_distance = cursor - prev_word_start;
         buffer.moveLeft(move_distance);
       }
@@ -366,9 +366,10 @@ public:
     // 🛠 Implement 'e' (Move to the end of the current/next word)
     if (event == Event::Character('e')) {
       for (size_t i = 0; i < amount; ++i) {
-        size_t current_word_end = cursor - (cursor % 4) + 3;
-        if (cursor % 4 == 3) { // If already at end, move to next word end
-          current_word_end += 4;
+        size_t current_word_end = cursor - (cursor % word_size) + word_size - 1;
+        if (cursor % word_size ==
+            word_size - 1) { // If already at end, move to next word end
+          current_word_end += word_size;
         }
         size_t move_distance = current_word_end - cursor;
         buffer.moveRight(move_distance);
