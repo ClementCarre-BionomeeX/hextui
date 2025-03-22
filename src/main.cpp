@@ -347,7 +347,7 @@ public:
         size_t move_distance = next_word_start - cursor;
         buffer.moveRight(move_distance);
       }
-      last_command = "w";
+      last_command = (amount > 1 ? std::to_string(amount) : "") + "w";
       updated = true;
     }
 
@@ -360,7 +360,7 @@ public:
         size_t move_distance = cursor - prev_word_start;
         buffer.moveLeft(move_distance);
       }
-      last_command = "b";
+      last_command = (amount > 1 ? std::to_string(amount) : "") + "b";
       updated = true;
     }
 
@@ -375,24 +375,31 @@ public:
         size_t move_distance = current_word_end - cursor;
         buffer.moveRight(move_distance);
       }
-      last_command = "e";
+      last_command = (amount > 1 ? std::to_string(amount) : "") + "e";
       updated = true;
     }
 
     auto altMinus = Event::Special({27, 45});
     if (event == altMinus) {
       // handle Alt+"-"
-      word_size -= 1;
-      word_size = word_size > 1 ? word_size : 1;
-      last_command = "Alt -";
+      if (word_size > amount) {
+        word_size -= amount;
+      } else {
+        word_size = 1;
+      }
+      last_command = (amount > 1 ? std::to_string(amount) : "") + "Alt -";
       updated = true;
     }
 
     if (event == Event::Character('-')) {
-      // handle plain "+"
-      columns -= 1;
-      columns = columns > 1 ? columns : 1;
-      last_command = "-";
+      // handle plain "-"
+      if (columns > amount) {
+
+        columns -= amount;
+      } else {
+        columns = 1;
+      }
+      last_command = (amount > 1 ? std::to_string(amount) : "") + "-";
       updated = true;
     }
 
@@ -400,15 +407,15 @@ public:
     if (event == altPlus) {
 
       // handle Alt+"+"
-      word_size += 1;
-      last_command = "Alt +";
+      word_size += amount;
+      last_command = (amount > 1 ? std::to_string(amount) : "") + "Alt +";
       updated = true;
     }
 
     if (event == Event::Character('+')) {
       // handle plain "+"
-      columns += 1;
-      last_command = "+";
+      columns += amount;
+      last_command = (amount > 1 ? std::to_string(amount) : "") + "+";
       updated = true;
     }
 
