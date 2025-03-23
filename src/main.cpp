@@ -1,3 +1,4 @@
+#include <cmath>
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/component_base.hpp>
 #include <ftxui/component/screen_interactive.hpp>
@@ -7,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -15,10 +17,11 @@
 
 using namespace ftxui;
 
-class HexViewer : public ComponentBase {
+class HexViewer : public ComponentBase,
+                  public std::enable_shared_from_this<HexViewer> {
 private:
   Buffer buffer;
-  size_t viewport_size = 20;
+  size_t viewport_size = 0;
   ScreenInteractive &screen;
   size_t viewport_offset = 0;
 
@@ -28,13 +31,22 @@ private:
   size_t move_count = 0;         // Stores the number prefix (e.g., "123")
   std::string last_command = ""; // Stores the last executed command
 
+  Box content_box_;
+
   void adjustViewport() {
+    if (content_box_.y_max <= content_box_.y_min) {
+      return; // Box not initialized yet; skip adjustment.
+    }
 
-    const size_t screen_height = screen.dimy();
+    viewport_size = content_box_.y_max - content_box_.y_min;
+    viewport_size =
+        viewport_size > 1 ? viewport_size - 1 : 1; // Adjust for borders
 
-    // Subtract space for top bar and bottom status bar (typically 4-5 lines
-    // total)
-    viewport_size = (screen_height > 8) ? screen_height - 8 : 1;
+    size_t number_of_char = columns * word_size * viewport_size;
+    size_t n = (size_t)std::pow(2, std::log(number_of_char) / std::log(2));
+
+    buffer.chunk_size = n;
+    buffer.reload();
 
     size_t cursor_abs = buffer.getAbsoluteCursor();
     size_t cursor_row = cursor_abs / (columns * word_size);
@@ -123,19 +135,19 @@ private:
       std::memcpy(&f64, &buffer.data[index - buffer.chunk_offset], 8);
     }
 
-    return vbox({
-        text("Inspector:") | bold | underlined,
-        text("  uint8: " + std::to_string(u8)),
-        text("   int8: " + std::to_string(i8)) | underlined,
-        text(" uint16: " + std::to_string(u16)),
-        text("  int16: " + std::to_string(i16)) | underlined,
-        text(" uint32: " + std::to_string(u32)),
-        text("  int32: " + std::to_string(i32)) | underlined,
-        text(" uint64: " + std::to_string(u64)),
-        text("  int64: " + std::to_string(i64)) | underlined,
-        text("float32: " + std::to_string(f32)),
-        text("float64: " + std::to_string(f64)) | underlined,
-    });
+    return window(text("Inspector:") | bold,
+                  vbox({
+                      text("  uint8: " + std::to_string(u8)),
+                      text("   int8: " + std::to_string(i8)),
+                      text(" uint16: " + std::to_string(u16)),
+                      text("  int16: " + std::to_string(i16)),
+                      text(" uint32: " + std::to_string(u32)),
+                      text("  int32: " + std::to_string(i32)),
+                      text(" uint64: " + std::to_string(u64)),
+                      text("  int64: " + std::to_string(i64)),
+                      text("float32: " + std::to_string(f32)),
+                      text("float64: " + std::to_string(f64)),
+                  }));
   }
 
   std::vector<Element> formatUtf8Row(size_t start, size_t length) {
@@ -169,11 +181,18 @@ private:
 
 public:
   HexViewer(const std::string &filename, ScreenInteractive &screen)
-      : buffer(filename), screen(screen) {
-    screen.PostEvent(Event::Custom);
-  }
+      : buffer(filename), screen(screen) {}
+
+  void run() { screen.Loop(shared_from_this()); }
 
   Element Render() override {
+
+    if (content_box_.y_max - content_box_.y_min <= 0) {
+      screen.PostEvent(Event::Special("Loading"));
+      return vbox({filler(), text("Loading...") | bold | center, filler()}) |
+             reflect(content_box_);
+    }
+
     std::vector<Element> rows;
     size_t abs_cursor = buffer.getAbsoluteCursor();
     size_t file_size_display = buffer.file_size - 1;
@@ -208,16 +227,16 @@ public:
     return vbox(Elements{
         // 🛠 NEW: Top Info Bar with File Name
         hbox({text(" File: " + buffer.filename + " ") | bold |
-              color(Color::Green)}) |
+              color(Color::Green) | flex}) |
             border,
 
         // Main UI
         hbox(Elements{
-            vbox(rows) | border | size(WIDTH, EQUAL, viewerwidth),
+            window(text("Data:") | bold, vbox(rows)) |
+                size(WIDTH, EQUAL, viewerwidth) | reflect(content_box_),
             /*vbox(rows) | border | size(WIDTH, EQUAL, columns * 3 + 3 + 2),*/
             separator(),
-            formatInspector(abs_cursor) | border |
-                size(WIDTH, GREATER_THAN, 40) | flex,
+            formatInspector(abs_cursor) | size(WIDTH, GREATER_THAN, 40) | flex,
         }) | flex,
 
         // Bottom Status Bar
@@ -387,7 +406,8 @@ int main(int argc, char *argv[]) {
 
   auto screen = ScreenInteractive::Fullscreen();
   auto viewer = std::make_shared<HexViewer>(argv[1], screen);
-  screen.Loop(viewer);
+
+  viewer->run();
 
   return 0;
 }
