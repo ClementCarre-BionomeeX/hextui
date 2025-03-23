@@ -181,7 +181,8 @@ private:
 
 public:
   HexViewer(const std::string &filename, ScreenInteractive &screen)
-      : buffer(filename), screen(screen) {}
+      : buffer(filename, [this]() { this->screen.PostEvent(Event::Custom); }),
+        screen(screen) {}
 
   void run() { screen.Loop(shared_from_this()); }
 
@@ -251,6 +252,10 @@ public:
 
   bool OnEvent(Event event) override {
     bool updated = false;
+
+    if (event == Event::Custom) {
+      return true;
+    }
 
     // 🛠 Handle number prefix (1-9)
     if (event.is_character() && event.character()[0] >= '0' &&

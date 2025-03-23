@@ -17,6 +17,6 @@ FetchContent_MakeAvailable(ftxui)
 
 add_executable(hextui src/main.cpp src/buffer.cpp)
 
-target_link_libraries(hextui PRIVATE ftxui::screen ftxui::dom ftxui::component)
+target_link_libraries(hextui PRIVATE ftxui::screen ftxui::dom ftxui::component pthread)
 
 install(TARGETS hextui DESTINATION bin)
