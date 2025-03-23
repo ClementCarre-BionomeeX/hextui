@@ -101,6 +101,19 @@ private:
     return row;
   }
 
+  std::string utf16_to_utf8(uint16_t cu1, uint16_t cu2 = 0) {
+    std::u16string utf16;
+    if (cu1 >= 0xD800 && cu1 <= 0xDBFF && cu2 >= 0xDC00 && cu2 <= 0xDFFF) {
+      utf16 += static_cast<char16_t>(cu1);
+      utf16 += static_cast<char16_t>(cu2);
+    } else {
+      utf16 += static_cast<char16_t>(cu1);
+    }
+
+    std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> conv;
+    return conv.to_bytes(utf16); // ✅ Safe for FTXUI
+  }
+
   Element formatInspector(size_t index) {
     // 🛠 Fix: No need to check against buffer.data.size()
     if (index >= buffer.file_size) {
@@ -119,6 +132,14 @@ private:
     int64_t i64 = 0;
     float f32 = 0.0f;
     double f64 = 0.0;
+    char ch = static_cast<char>(u8);
+    uint16_t cu1 = 0, cu2 = 0;
+    std::memcpy(&cu1, &buffer.data[index - buffer.chunk_offset], 2);
+
+    bool is_surrogate = (cu1 >= 0xD800 && cu1 <= 0xDBFF);
+    if (is_surrogate && index + 4 <= buffer.file_size) {
+      std::memcpy(&cu2, &buffer.data[index - buffer.chunk_offset + 2], 2);
+    }
 
     if (index + 2 <= buffer.file_size) {
       std::memcpy(&u16, &buffer.data[index - buffer.chunk_offset], 2);
@@ -135,6 +156,7 @@ private:
       std::memcpy(&f64, &buffer.data[index - buffer.chunk_offset], 8);
     }
 
+    std::string utf8_char = utf16_to_utf8(cu1, cu2);
     return window(text("Inspector:") | bold,
                   vbox({
                       text("  uint8: " + std::to_string(u8)),
@@ -147,6 +169,8 @@ private:
                       text("  int64: " + std::to_string(i64)),
                       text("float32: " + std::to_string(f32)),
                       text("float64: " + std::to_string(f64)),
+                      text("  utf-8: " + std::string(1, ch)),
+                      text(" utf-16: " + utf8_char),
                   }));
   }
 
