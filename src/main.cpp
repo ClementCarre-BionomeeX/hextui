@@ -11,6 +11,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <utf8.h>
 #include <vector>
 
 #include "buffer.h"
@@ -110,8 +111,14 @@ private:
       utf16 += static_cast<char16_t>(cu1);
     }
 
-    std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> conv;
-    return conv.to_bytes(utf16); // ✅ Safe for FTXUI
+    std::string utf8;
+    try {
+      utf8::utf16to8(utf16.begin(), utf16.end(), std::back_inserter(utf8));
+    } catch (const std::exception &e) {
+      // Invalid UTF-16 sequence
+      return "Invalid UTF-16";
+    }
+    return utf8;
   }
 
   Element formatInspector(size_t index) {

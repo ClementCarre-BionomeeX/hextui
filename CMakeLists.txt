@@ -13,10 +13,19 @@ FetchContent_Declare(
   GIT_TAG v5.0.0
 )
 
+FetchContent_Declare(
+  utf8cpp
+  GIT_REPOSITORY https://github.com/nemtrif/utfcpp.git
+  GIT_TAG        v3.2.1 # or latest stable version
+)
+
+FetchContent_MakeAvailable(utf8cpp)
+
 FetchContent_MakeAvailable(ftxui)
 
 add_executable(hextui src/main.cpp src/buffer.cpp)
 
-target_link_libraries(hextui PRIVATE ftxui::screen ftxui::dom ftxui::component pthread)
+target_include_directories(hextui PRIVATE ${utf8cpp_SOURCE_DIR}/source)
+target_link_libraries(hextui PRIVATE ftxui::screen ftxui::dom ftxui::component pthread )
 
 install(TARGETS hextui DESTINATION bin)
