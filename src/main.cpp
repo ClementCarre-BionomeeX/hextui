@@ -31,71 +31,103 @@ std::string utf16_to_utf8(uint16_t cu1, uint16_t cu2 = 0) {
   return conv.to_bytes(utf16); // ✅ Safe for FTXUI
 }
 
+// TODO: encapsulate commands
+// - undo redo
+// - last command
+// - string representation
+// - ...
+class Command {};
+
+class hexModel {
+public:
+  Buffer buffer;
+  size_t viewport_size = 0;
+  size_t viewport_offset = 0;
+  size_t word_size = 4;
+  size_t columns = 4;
+  size_t move_count = 0;
+
+  // TODO: change to a Command class
+  std::string last_command = "";
+
+  // TODO: model responsibility ?
+  ScreenInteractive &screen;
+  Box content_box_;
+
+  hexModel(const std::string &filename, ScreenInteractive &screen)
+      : buffer(filename, [this]() { this->screen.PostEvent(Event::Custom); }),
+        screen(screen) {}
+};
+
 class HexViewer : public ComponentBase,
                   public std::enable_shared_from_this<HexViewer> {
 private:
-  Buffer buffer;
-  size_t viewport_size = 0;
-  ScreenInteractive &screen;
-  size_t viewport_offset = 0;
-
-  size_t word_size = 4;
-  size_t columns = 4;
-
-  size_t move_count = 0;         // Stores the number prefix (e.g., "123")
-  std::string last_command = ""; // Stores the last executed command
-
-  Box content_box_;
+  hexModel model;
+  /*Buffer buffer;*/
+  /*size_t viewport_size = 0;*/
+  /*ScreenInteractive &screen;*/
+  /*size_t viewport_offset = 0;*/
+  /**/
+  /*size_t word_size = 4;*/
+  /*size_t columns = 4;*/
+  /**/
+  /*size_t move_count = 0;         // Stores the number prefix (e.g., "123")*/
+  /*std::string last_command = ""; // Stores the last executed command*/
+  /**/
+  /*Box model.content_box_;*/
 
   void adjustViewport() {
-    if (content_box_.y_max <= content_box_.y_min) {
+    if (model.content_box_.y_max <= model.content_box_.y_min) {
       return; // Box not initialized yet; skip adjustment.
     }
 
-    viewport_size = content_box_.y_max - content_box_.y_min;
-    viewport_size =
-        viewport_size > 1 ? viewport_size - 1 : 1; // Adjust for borders
+    model.viewport_size = model.content_box_.y_max - model.content_box_.y_min;
+    model.viewport_size = model.viewport_size > 1 ? model.viewport_size - 1
+                                                  : 1; // Adjust for borders
 
-    size_t number_of_char = columns * word_size * viewport_size;
+    size_t number_of_char =
+        model.columns * model.word_size * model.viewport_size;
     size_t n = (size_t)std::pow(2, std::log(number_of_char) / std::log(2));
 
-    buffer.chunk_size = n;
-    buffer.reload();
+    model.buffer.chunk_size = n;
+    model.buffer.reload();
 
-    size_t cursor_abs = buffer.getAbsoluteCursor();
-    size_t cursor_row = cursor_abs / (columns * word_size);
+    size_t cursor_abs = model.buffer.getAbsoluteCursor();
+    size_t cursor_row = cursor_abs / (model.columns * model.word_size);
 
-    size_t viewport_row_start = viewport_offset / (columns * word_size);
-    size_t viewport_row_end = viewport_row_start + viewport_size;
+    size_t viewport_row_start =
+        model.viewport_offset / (model.columns * model.word_size);
+    size_t viewport_row_end = viewport_row_start + model.viewport_size;
 
     if (cursor_row < viewport_row_start) {
-      viewport_offset = cursor_row * (columns * word_size);
+      model.viewport_offset = cursor_row * (model.columns * model.word_size);
     } else if (cursor_row >= viewport_row_end) {
-      viewport_offset = cursor_row * (columns * word_size) -
-                        (viewport_size - 1) * (columns * word_size);
+      model.viewport_offset =
+          cursor_row * (model.columns * model.word_size) -
+          (model.viewport_size - 1) * (model.columns * model.word_size);
     }
   }
 
   std::vector<Element> formatHexRow(size_t start, size_t length) {
     std::vector<Element> row;
-    size_t abs_cursor = buffer.getAbsoluteCursor();
+    size_t abs_cursor = model.buffer.getAbsoluteCursor();
 
     for (size_t i = 0; i < length; ++i) {
       size_t abs_pos = start + i;
 
       // 🛠 Ensure chunk is preloaded before rendering
-      if (abs_pos >= buffer.chunk_offset + buffer.data.size()) {
-        buffer.checkChunks(abs_pos - (abs_pos % buffer.chunk_size));
+      if (abs_pos >= model.buffer.chunk_offset + model.buffer.data.size()) {
+        model.buffer.checkChunks(abs_pos - (abs_pos % model.buffer.chunk_size));
       }
 
-      if (abs_pos < buffer.chunk_offset ||
-          abs_pos >= buffer.chunk_offset + buffer.data.size()) {
+      if (abs_pos < model.buffer.chunk_offset ||
+          abs_pos >= model.buffer.chunk_offset + model.buffer.data.size()) {
         row.push_back(text("  ")); // 🛠 Empty space instead of ".."
       } else {
-        size_t local_pos = abs_pos - buffer.chunk_offset;
+        size_t local_pos = abs_pos - model.buffer.chunk_offset;
         std::ostringstream oss;
         oss << std::setw(2) << std::setfill('0') << std::hex
-            << (int)buffer.data[local_pos];
+            << (int)model.buffer.data[local_pos];
 
         auto byte_element = text(oss.str());
 
@@ -108,7 +140,7 @@ private:
       }
 
       // Add extra space every word_size for readability
-      if ((i + 1) % word_size == 0) {
+      if ((i + 1) % model.word_size == 0) {
         row.push_back(text(" "));
       }
     }
@@ -135,14 +167,15 @@ private:
   }
 
   Element formatInspector(size_t index) {
-    // 🛠 Fix: No need to check against buffer.data.size()
-    if (index >= buffer.file_size) {
+    // 🛠 Fix: No need to check against model.buffer.data.size()
+    if (index >= model.buffer.file_size) {
       return text(
           "Out of bounds"); // Only return this if the cursor is beyond EOF
     }
 
     uint8_t u8 =
-        buffer.data[index - buffer.chunk_offset]; // Adjust for chunk offset
+        model.buffer
+            .data[index - model.buffer.chunk_offset]; // Adjust for chunk offset
     int8_t i8 = static_cast<int8_t>(u8);
     uint16_t u16 = 0;
     int16_t i16 = 0;
@@ -154,26 +187,35 @@ private:
     double f64 = 0.0;
     char ch = static_cast<char>(u8);
     uint16_t cu1 = 0, cu2 = 0;
-    std::memcpy(&cu1, &buffer.data[index - buffer.chunk_offset], 2);
+    std::memcpy(&cu1, &model.buffer.data[index - model.buffer.chunk_offset], 2);
 
     bool is_surrogate = (cu1 >= 0xD800 && cu1 <= 0xDBFF);
-    if (is_surrogate && index + 4 <= buffer.file_size) {
-      std::memcpy(&cu2, &buffer.data[index - buffer.chunk_offset + 2], 2);
+    if (is_surrogate && index + 4 <= model.buffer.file_size) {
+      std::memcpy(&cu2,
+                  &model.buffer.data[index - model.buffer.chunk_offset + 2], 2);
     }
 
-    if (index + 2 <= buffer.file_size) {
-      std::memcpy(&u16, &buffer.data[index - buffer.chunk_offset], 2);
-      std::memcpy(&i16, &buffer.data[index - buffer.chunk_offset], 2);
+    if (index + 2 <= model.buffer.file_size) {
+      std::memcpy(&u16, &model.buffer.data[index - model.buffer.chunk_offset],
+                  2);
+      std::memcpy(&i16, &model.buffer.data[index - model.buffer.chunk_offset],
+                  2);
     }
-    if (index + 4 <= buffer.file_size) {
-      std::memcpy(&u32, &buffer.data[index - buffer.chunk_offset], 4);
-      std::memcpy(&i32, &buffer.data[index - buffer.chunk_offset], 4);
-      std::memcpy(&f32, &buffer.data[index - buffer.chunk_offset], 4);
+    if (index + 4 <= model.buffer.file_size) {
+      std::memcpy(&u32, &model.buffer.data[index - model.buffer.chunk_offset],
+                  4);
+      std::memcpy(&i32, &model.buffer.data[index - model.buffer.chunk_offset],
+                  4);
+      std::memcpy(&f32, &model.buffer.data[index - model.buffer.chunk_offset],
+                  4);
     }
-    if (index + 8 <= buffer.file_size) {
-      std::memcpy(&u64, &buffer.data[index - buffer.chunk_offset], 8);
-      std::memcpy(&i64, &buffer.data[index - buffer.chunk_offset], 8);
-      std::memcpy(&f64, &buffer.data[index - buffer.chunk_offset], 8);
+    if (index + 8 <= model.buffer.file_size) {
+      std::memcpy(&u64, &model.buffer.data[index - model.buffer.chunk_offset],
+                  8);
+      std::memcpy(&i64, &model.buffer.data[index - model.buffer.chunk_offset],
+                  8);
+      std::memcpy(&f64, &model.buffer.data[index - model.buffer.chunk_offset],
+                  8);
     }
 
     std::string utf8_char = utf16_to_utf8(cu1, cu2);
@@ -196,16 +238,16 @@ private:
 
   std::vector<Element> formatUtf8Row(size_t start, size_t length) {
     std::vector<Element> row;
-    size_t abs_cursor = buffer.getAbsoluteCursor();
+    size_t abs_cursor = model.buffer.getAbsoluteCursor();
 
     for (size_t i = 0; i < length; ++i) {
       size_t abs_pos = start + i;
 
-      if (abs_pos < buffer.chunk_offset ||
-          abs_pos >= buffer.chunk_offset + buffer.data.size()) {
+      if (abs_pos < model.buffer.chunk_offset ||
+          abs_pos >= model.buffer.chunk_offset + model.buffer.data.size()) {
         row.push_back(text(".") | color(Color::GrayDark)); // Out-of-bounds
       } else {
-        uint8_t byte = buffer.data[abs_pos - buffer.chunk_offset];
+        uint8_t byte = model.buffer.data[abs_pos - model.buffer.chunk_offset];
         char display_char =
             (byte >= 32 && byte <= 126) ? byte : '.'; // Printable ASCII or dot
         auto char_element =
@@ -224,21 +266,29 @@ private:
   }
 
 public:
-  HexViewer(const std::string &filename, ScreenInteractive &screen)
-      : buffer(filename, [this]() { this->screen.PostEvent(Event::Custom); }),
-        screen(screen) {}
+  /*HexViewer(const std::string &filename, ScreenInteractive &screen)*/
+  /*    : model.buffer(filename, [this]() {
+   * this->screen.PostEvent(Event::Custom);
+   * }),*/
+  /*      screen(screen) {}*/
 
-  void run() { screen.Loop(shared_from_this()); }
+  HexViewer(const std::string &filename, ScreenInteractive &screen)
+      : model(filename, screen) {}
+
+  void run() { model.screen.Loop(shared_from_this()); }
 
   std::vector<Element> generate_content() {
     std::vector<Element> rows;
 
-    rows.reserve(viewport_size);
-    for (size_t i = viewport_offset;
-         i < viewport_offset + viewport_size * (columns * word_size);
-         i += (columns * word_size)) {
-      std::vector<Element> hex_row = formatHexRow(i, (columns * word_size));
-      std::vector<Element> utf8_row = formatUtf8Row(i, (columns * word_size));
+    rows.reserve(model.viewport_size);
+    for (size_t i = model.viewport_offset;
+         i < model.viewport_offset +
+                 model.viewport_size * (model.columns * model.word_size);
+         i += (model.columns * model.word_size)) {
+      std::vector<Element> hex_row =
+          formatHexRow(i, (model.columns * model.word_size));
+      std::vector<Element> utf8_row =
+          formatUtf8Row(i, (model.columns * model.word_size));
       hex_row.insert(hex_row.end(), utf8_row.begin(),
                      utf8_row.end()); // Merge both rows
       rows.push_back(hbox(hex_row));
@@ -247,8 +297,8 @@ public:
   }
   std::string generate_infobar() {
 
-    size_t abs_cursor = buffer.getAbsoluteCursor();
-    size_t file_size_display = buffer.file_size - 1;
+    size_t abs_cursor = model.buffer.getAbsoluteCursor();
+    size_t file_size_display = model.buffer.file_size - 1;
 
     // 🛠 Status bar elements
     std::ostringstream status;
@@ -259,14 +309,14 @@ public:
 
   Element Render() override {
 
-    if (content_box_.y_max - content_box_.y_min <= 0) {
-      screen.PostEvent(Event::Special("Loading"));
+    if (model.content_box_.y_max - model.content_box_.y_min <= 0) {
+      model.screen.PostEvent(Event::Special("Loading"));
       return vbox({filler(),
                    text("Loading... If you see this message, there is probably "
                         "an error somewhere :)") |
                        bold | center,
                    filler()}) |
-             reflect(content_box_);
+             reflect(model.content_box_);
     }
 
     auto rows = generate_content();
@@ -274,28 +324,30 @@ public:
     adjustViewport();
 
     std::ostringstream command_info;
-    if (move_count > 0) {
-      command_info << move_count; // Display number prefix if active
+    if (model.move_count > 0) {
+      command_info << model.move_count; // Display number prefix if active
     }
-    if (!last_command.empty()) {
-      command_info << last_command; // Show last executed command
+    if (!model.last_command.empty()) {
+      command_info << model.last_command; // Show last executed command
     }
 
-    size_t viewerwidth =
-        columns * word_size * 2 + (columns - 1) + 2 + columns * word_size + 2;
+    size_t viewerwidth = model.columns * model.word_size * 2 +
+                         (model.columns - 1) + 2 +
+                         model.columns * model.word_size + 2;
     return vbox(Elements{
         // 🛠 NEW: Top Info Bar with File Name
-        hbox({text(" File: " + buffer.filename + " ") | bold |
+        hbox({text(" File: " + model.buffer.filename + " ") | bold |
               color(Color::Green) | flex}) |
             border,
 
         // Main UI
         hbox(Elements{
             window(text("Data:") | bold, vbox(rows)) |
-                size(WIDTH, EQUAL, viewerwidth) | reflect(content_box_),
-            /*vbox(rows) | border | size(WIDTH, EQUAL, columns * 3 + 3 + 2),*/
+                size(WIDTH, EQUAL, viewerwidth) | reflect(model.content_box_),
+            /*vbox(rows) | border | size(WIDTH, EQUAL, model.columns * 3 + 3 +
+               2),*/
             separator(),
-            formatInspector(buffer.getAbsoluteCursor()) |
+            formatInspector(model.buffer.getAbsoluteCursor()) |
                 size(WIDTH, GREATER_THAN, 40) | flex,
         }) | flex,
 
@@ -319,113 +371,116 @@ public:
     // 🛠 Handle number prefix (1-9)
     if (event.is_character() && event.character()[0] >= '0' &&
         event.character()[0] <= '9') {
-      move_count = move_count * 10 + (event.character()[0] - '0');
-      last_command = "";
+      model.move_count = model.move_count * 10 + (event.character()[0] - '0');
+      model.last_command = "";
       return true;
     }
 
-    // 🛠 Default move amount (1 if no prefix was set)
-    size_t amount = (move_count > 0) ? move_count : 1;
-    move_count = 0; // Reset after execution
+    // 🛠 Default model.move amount (1 if no prefix was set)
+    size_t amount = (model.move_count > 0) ? model.move_count : 1;
+    model.move_count = 0; // Reset after execution
 
-    size_t cursor = buffer.getAbsoluteCursor();
+    size_t cursor = model.buffer.getAbsoluteCursor();
 
-    // 🛠 Movement commands
+    // 🛠 model.Movement commands
     if (event == Event::Character('h') || event == Event::ArrowLeft) {
-      buffer.moveLeft(amount);
-      last_command = (amount > 1 ? std::to_string(amount) : "") + "h";
+      model.buffer.moveLeft(amount);
+      model.last_command = (amount > 1 ? std::to_string(amount) : "") + "h";
       updated = true;
     }
     if (event == Event::Character('l') || event == Event::ArrowRight) {
-      buffer.moveRight(amount);
-      last_command = (amount > 1 ? std::to_string(amount) : "") + "l";
+      model.buffer.moveRight(amount);
+      model.last_command = (amount > 1 ? std::to_string(amount) : "") + "l";
       updated = true;
     }
     if (event == Event::Character('k') || event == Event::ArrowUp) {
-      buffer.moveLeft(amount * columns * word_size);
-      last_command = (amount > 1 ? std::to_string(amount) : "") + "k";
+      model.buffer.moveLeft(amount * model.columns * model.word_size);
+      model.last_command = (amount > 1 ? std::to_string(amount) : "") + "k";
       updated = true;
     }
     if (event == Event::Character('j') || event == Event::ArrowDown) {
-      buffer.moveRight(amount * columns * word_size);
-      last_command = (amount > 1 ? std::to_string(amount) : "") + "j";
+      model.buffer.moveRight(amount * model.columns * model.word_size);
+      model.last_command = (amount > 1 ? std::to_string(amount) : "") + "j";
       updated = true;
     }
 
-    // 🛠 Implement 'w' (Move forward to the next word start)
+    // 🛠 Implement 'w' (model.Move forward to the next model.word start)
     if (event == Event::Character('w')) {
       for (size_t i = 0; i < amount; ++i) {
-        size_t next_word_start = cursor + word_size - (cursor % word_size);
+        size_t next_word_start =
+            cursor + model.word_size - (cursor % model.word_size);
         size_t move_distance = next_word_start - cursor;
-        buffer.moveRight(move_distance);
+        model.buffer.moveRight(move_distance);
       }
-      last_command = (amount > 1 ? std::to_string(amount) : "") + "w";
+      model.last_command = (amount > 1 ? std::to_string(amount) : "") + "w";
       updated = true;
     }
 
-    // 🛠 Implement 'b' (Move backward to the previous word start)
+    // 🛠 Implement 'b' (model.Move backward to the previous model.word start)
     if (event == Event::Character('b')) {
       for (size_t i = 0; i < amount; ++i) {
-        size_t prev_word_start = (cursor % word_size == 0)
-                                     ? cursor - word_size
-                                     : cursor - (cursor % word_size);
+        size_t prev_word_start = (cursor % model.word_size == 0)
+                                     ? cursor - model.word_size
+                                     : cursor - (cursor % model.word_size);
         size_t move_distance = cursor - prev_word_start;
-        buffer.moveLeft(move_distance);
+        model.buffer.moveLeft(move_distance);
       }
-      last_command = (amount > 1 ? std::to_string(amount) : "") + "b";
+      model.last_command = (amount > 1 ? std::to_string(amount) : "") + "b";
       updated = true;
     }
 
-    // 🛠 Implement 'e' (Move to the end of the current/next word)
+    // 🛠 Implement 'e' (model.Move to the end of the current/next model.word)
     if (event == Event::Character('e')) {
       for (size_t i = 0; i < amount; ++i) {
-        size_t current_word_end = cursor - (cursor % word_size) + word_size - 1;
-        if (cursor % word_size ==
-            word_size - 1) { // If already at end, move to next word end
-          current_word_end += word_size;
+        size_t current_word_end =
+            cursor - (cursor % model.word_size) + model.word_size - 1;
+        if (cursor % model.word_size ==
+            model.word_size -
+                1) { // If already at end, model.move to next model.word end
+          current_word_end += model.word_size;
         }
         size_t move_distance = current_word_end - cursor;
-        buffer.moveRight(move_distance);
+        model.buffer.moveRight(move_distance);
       }
-      last_command = (amount > 1 ? std::to_string(amount) : "") + "e";
+      model.last_command = (amount > 1 ? std::to_string(amount) : "") + "e";
       updated = true;
     }
 
     auto home = Event::Special({27, 91, 72});
     if (event == home) {
-      buffer.goHome();
-      last_command = "Home";
+      model.buffer.goHome();
+      model.last_command = "Home";
       updated = true;
     }
 
     auto end = Event::Special({27, 91, 70});
     if (event == end) {
-      buffer.goEnd();
-      last_command = "End";
+      model.buffer.goEnd();
+      model.last_command = "End";
       updated = true;
     }
 
     auto altMinus = Event::Special({27, 45});
     if (event == altMinus) {
       // handle Alt+"-"
-      if (word_size > amount) {
-        word_size -= amount;
+      if (model.word_size > amount) {
+        model.word_size -= amount;
       } else {
-        word_size = 1;
+        model.word_size = 1;
       }
-      last_command = (amount > 1 ? std::to_string(amount) : "") + "Alt -";
+      model.last_command = (amount > 1 ? std::to_string(amount) : "") + "Alt -";
       updated = true;
     }
 
     if (event == Event::Character('-')) {
       // handle plain "-"
-      if (columns > amount) {
+      if (model.columns > amount) {
 
-        columns -= amount;
+        model.columns -= amount;
       } else {
-        columns = 1;
+        model.columns = 1;
       }
-      last_command = (amount > 1 ? std::to_string(amount) : "") + "-";
+      model.last_command = (amount > 1 ? std::to_string(amount) : "") + "-";
       updated = true;
     }
 
@@ -433,27 +488,27 @@ public:
     if (event == altPlus) {
 
       // handle Alt+"+"
-      word_size += amount;
-      last_command = (amount > 1 ? std::to_string(amount) : "") + "Alt +";
+      model.word_size += amount;
+      model.last_command = (amount > 1 ? std::to_string(amount) : "") + "Alt +";
       updated = true;
     }
 
     if (event == Event::Character('+')) {
       // handle plain "+"
-      columns += amount;
-      last_command = (amount > 1 ? std::to_string(amount) : "") + "+";
+      model.columns += amount;
+      model.last_command = (amount > 1 ? std::to_string(amount) : "") + "+";
       updated = true;
     }
 
     if (event == Event::Character('r')) {
-      buffer.reload();
-      last_command = "r";
+      model.buffer.reload();
+      model.last_command = "r";
       updated = true;
     }
 
     if (event == Event::Character('q')) {
       // how to quit ??
-      screen.ExitLoopClosure()();
+      model.screen.ExitLoopClosure()();
       return true;
     }
 
