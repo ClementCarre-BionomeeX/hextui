@@ -18,6 +18,19 @@
 
 using namespace ftxui;
 
+std::string utf16_to_utf8(uint16_t cu1, uint16_t cu2 = 0) {
+  std::u16string utf16;
+  if (cu1 >= 0xD800 && cu1 <= 0xDBFF && cu2 >= 0xDC00 && cu2 <= 0xDFFF) {
+    utf16 += static_cast<char16_t>(cu1);
+    utf16 += static_cast<char16_t>(cu2);
+  } else {
+    utf16 += static_cast<char16_t>(cu1);
+  }
+
+  std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> conv;
+  return conv.to_bytes(utf16); // ✅ Safe for FTXUI
+}
+
 class HexViewer : public ComponentBase,
                   public std::enable_shared_from_this<HexViewer> {
 private:
@@ -217,19 +230,8 @@ public:
 
   void run() { screen.Loop(shared_from_this()); }
 
-  Element Render() override {
-
-    if (content_box_.y_max - content_box_.y_min <= 0) {
-      screen.PostEvent(Event::Special("Loading"));
-      return vbox({filler(), text("Loading...") | bold | center, filler()}) |
-             reflect(content_box_);
-    }
-
+  std::vector<Element> generate_content() {
     std::vector<Element> rows;
-    size_t abs_cursor = buffer.getAbsoluteCursor();
-    size_t file_size_display = buffer.file_size - 1;
-
-    adjustViewport();
 
     rows.reserve(viewport_size);
     for (size_t i = viewport_offset;
@@ -241,10 +243,35 @@ public:
                      utf8_row.end()); // Merge both rows
       rows.push_back(hbox(hex_row));
     }
+    return rows;
+  }
+  std::string generate_infobar() {
+
+    size_t abs_cursor = buffer.getAbsoluteCursor();
+    size_t file_size_display = buffer.file_size - 1;
 
     // 🛠 Status bar elements
     std::ostringstream status;
     status << abs_cursor << " / " << file_size_display;
+    return status.str();
+  }
+  /*std::string generate_filebar() {}*/
+
+  Element Render() override {
+
+    if (content_box_.y_max - content_box_.y_min <= 0) {
+      screen.PostEvent(Event::Special("Loading"));
+      return vbox({filler(),
+                   text("Loading... If you see this message, there is probably "
+                        "an error somewhere :)") |
+                       bold | center,
+                   filler()}) |
+             reflect(content_box_);
+    }
+
+    auto rows = generate_content();
+    auto status = generate_infobar();
+    adjustViewport();
 
     std::ostringstream command_info;
     if (move_count > 0) {
@@ -268,14 +295,15 @@ public:
                 size(WIDTH, EQUAL, viewerwidth) | reflect(content_box_),
             /*vbox(rows) | border | size(WIDTH, EQUAL, columns * 3 + 3 + 2),*/
             separator(),
-            formatInspector(abs_cursor) | size(WIDTH, GREATER_THAN, 40) | flex,
+            formatInspector(buffer.getAbsoluteCursor()) |
+                size(WIDTH, GREATER_THAN, 40) | flex,
         }) | flex,
 
         // Bottom Status Bar
         hbox(Elements{
             text(" " + command_info.str() + " ") | color(Color::Yellow),
             filler(),
-            text(" " + status.str() + " ") | color(Color::Cyan),
+            text(" " + status + " ") | color(Color::Cyan),
         }) | size(HEIGHT, EQUAL, 1) |
             border,
     });
