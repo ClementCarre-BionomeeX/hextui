@@ -23,7 +23,7 @@ FetchContent_MakeAvailable(utf8cpp)
 
 FetchContent_MakeAvailable(ftxui)
 
-add_executable(hextui src/main.cpp src/buffer.cpp)
+add_executable(hextui src/main.cpp src/buffer.cpp src/hex_model.cpp src/hex_controller.cpp src/hex_view.cpp src/utils.cpp)
 
 target_include_directories(hextui PRIVATE ${utf8cpp_SOURCE_DIR}/source)
 target_link_libraries(hextui PRIVATE ftxui::screen ftxui::dom ftxui::component pthread )
