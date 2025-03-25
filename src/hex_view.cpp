@@ -183,12 +183,12 @@ ftxui::Element HexView::render() {
                        model.columns * model.word_size + 2;
   return vbox(Elements{
       // 🛠 NEW: Top Info Bar with File Name
-      window(text("File:"), {text(model.buffer.filename + " ") | bold |
-                             color(Color::Green) | flex}),
+      window(text("File:") | bold, {text(model.buffer.filename + " ") | bold |
+                                    color(Color::Green) | flex}),
 
       // Main UI
       hbox(Elements{
-          window(text("Data:"), vbox(generate_content())) |
+          window(text("Data:") | bold, vbox(generate_content())) |
               size(WIDTH, EQUAL, viewerwidth) | reflect(model.content_box_),
           separator(),
           formatInspector(model.buffer.getAbsoluteCursor()) |
